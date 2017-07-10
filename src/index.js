@@ -65,6 +65,10 @@ class Service {
         newQuery.limit = this.getLimit(this.parse(query.query.$limit), paginate);
         delete query.query.$limit;
       }
+      if (query.query.$include) {
+        newQuery.include = $include;
+        delete query.query.$include;
+      }
       if (query.query.$skip) {
         newQuery.skip = query.query.$skip;
         delete query.query.$skip;
