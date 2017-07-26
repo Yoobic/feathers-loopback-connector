@@ -66,7 +66,7 @@ class Service {
         delete query.query.$limit;
       }
       if (query.query.$include) {
-        newQuery.include = $include;
+        newQuery.include = query.query.$include;
         delete query.query.$include;
       }
       if (query.query.$skip) {
