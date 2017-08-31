@@ -91,7 +91,7 @@ function coerceQueryEntry (value, key, ...path) {
     case '$unit':
       return { path: ['where', ...path], key: 'unit', unset: key, value };
 
-        // other properties should go directly into where
+    // other properties should go into where
     default:
       return { path: ['where', ...path], key, value };
   }
@@ -108,23 +108,23 @@ function traverse (o, fn, ...path) {
 }
 
 function coerceParamsToLoopbackFilter ({ query }) {
-  let entries = [];
-  traverse(query, (value, key, ...path) => {
-    let coerced = coerceQueryEntry(value, key, ...path);
-    if (coerced && !_isUndefined(coerced.value)) {
-      entries.push(coerced);
+  let unsetPaths = [];
+  let filter = {};
+  traverse(query, (v, k, ...p) => {
+    let { value, key, path, unset, descend } = coerceQueryEntry(v, k, ...p);
+    if (!_isUndefined(value)) {
+      _set(filter, [...path, key], value);
     }
-    if (coerced.path[0] === 'limit') {
-      console.log('LIMIT', coerced);
+    if (!_isUndefined(unset)) {
+      unsetPaths.push([...path, unset]);
     }
-    return coerced && coerced.descend !== false;
+    return descend;
   });
-  let filter = entries.reduce((acc, { path, key, value }) => {
-    return _set(acc, [...path, key], value);
-  }, {});
-  entries.filter(c => c.unset).forEach(({ path, unset }) => {
-    _unset(filter, [...path, unset]);
-  });
+  if (unsetPaths.length) {
+    unsetPaths.forEach(unsetPath => {
+      _unset(filter, unsetPath);
+    });
+  }
   return filter;
 }
 
@@ -146,7 +146,6 @@ class Service {
         delete query.limit;
       }
 
-      console.log('New Query', query);
       debug('New Query', query);
       return query;
     }
@@ -157,10 +156,11 @@ class Service {
     const paginate = (params && typeof params.paginate !== 'undefined') ? params.paginate : this.paginate;
     params.query = params.query || {};
     const filter = this.transformQuery(params, paginate);
+    const getResults = () => filter.limit === 0 ? Promise.resolve([]) : this.model.find(filter);
     if (!paginate.default) {
-      return this.model.find(filter);
+      return getResults();
     }
-    return Promise.all([this.model.count(filter.where), this.model.find(filter)])
+    return Promise.all([this.model.count(filter.where), getResults()])
       .then(([count, results]) => ({
         total: count,
         skip: params.query.$skip ? parse(params.query.$skip) : 0,
@@ -209,10 +209,11 @@ class Service {
     const select = commons.select(params, this.id);
     // if (id === null && !_isEmpty(filter.where)) {
     if (id === null) {
-      return this.model.updateAll(filter.where, data)
-        .then((result) => {
-          params.query = data;
-          return this.model.find(this.transformQuery(params));
+      return this.model.find(filter)
+        .then((results) => {
+          const ids = results.map(item => item[this.id]);
+          return this.model.updateAll(filter.where, data)
+            .then(() => this.model.find({ where: { [this.id]: { inq: ids } } }));
         });
     }
     return this.model.findById(id)
