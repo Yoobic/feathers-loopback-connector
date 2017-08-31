@@ -1,15 +1,135 @@
+'use strict';
 const errors = require('feathers-errors');
 const makeDebug = require('debug');
 const debug = makeDebug('feathers-loopback-connector');
 // const error = makeDebug('feathers-loopback-connector:error');
 const commons = require('feathers-commons');
+const _isUndefined = require('lodash.isundefined');
+// const _isEmpty = require('lodash.isempty');
+const _cloneDeep = require('lodash.clonedeep');
+const _merge = require('lodash.merge');
+const _set = require('lodash.set');
+const _unset = require('lodash.unset');
 // if (!global._babelPolyfill) { require('babel-polyfill'); }
 
-class Service {
-  // options;
-  // model;
+function parse (num) {
+  if (Number.isFinite(num)) {
+    return Math.abs(Number.parseInt(num));
+  }
+}
+function getLimit (limit, paginate) {
+  limit = parse(limit);
+  if (paginate && paginate.default) {
+    const lower = Number.isInteger(limit) ? limit : paginate.default;
+    const upper = Number.isInteger(paginate.max) ? paginate.max : Number.MAX_VALUE;
+    return Math.min(lower, upper);
+  }
+  return limit;
+}
 
-  constructor(options = {}) {
+function coerceQueryEntry (value, key, ...path) {
+  switch (key) {
+    // order, limit, include, fields, skip operators
+    case '$sort':
+      return {
+        path,
+        key: 'order',
+        // eslint-disable-next-line eqeqeq
+        value: Object.keys(value).reduce((acc, key) => value[key] == 1 ? acc.concat(`${key} ASC`) : value[key] == -1 ? acc.concat(`${key} DESC`) : acc, []),
+        descend: false
+      };
+    case '$select':
+      return { path, key: 'fields', value, descend: false };
+    case '$limit':
+      return { path, key: 'limit', value: parse(value), descend: false };
+    case '$include':
+      return { path, key: 'include', value, descend: false };
+    case '$skip':
+      return Number.isSafeInteger(value) ? { path, key: 'skip', value: parse(value), descend: false } : null;
+
+    // where property operators
+    case '$in':
+      return { path: ['where', ...path], key: 'inq', unset: key, value };
+    case '$nin':
+      return { path: ['where', ...path], key: 'nin', unset: key, value };
+    case '$lt':
+      return { path: ['where', ...path], key: 'lt', unset: key, value };
+    case '$lte':
+      return { path: ['where', ...path], key: 'lte', unset: key, value };
+    case '$gt':
+      return { path: ['where', ...path], key: 'gt', unset: key, value };
+    case '$gte':
+      return { path: ['where', ...path], key: 'gte', unset: key, value };
+    case '$ne':
+      return { path: ['where', ...path], key: 'neq', unset: key, value };
+    case '$not':
+      return { path: ['where', ...path], key: 'neq', unset: key, value };
+    case '$or':
+      return { path: ['where', ...path], key: 'or', unset: key, value };
+    case '$and':
+      return { path: ['where', ...path], key: 'and', unset: key, value };
+    case '$between':
+      return { path: ['where', ...path], key: 'between', unset: key, value };
+    case '$inq':
+      return { path: ['where', ...path], key: 'inq', unset: key, value };
+    case '$like':
+      return { path: ['where', ...path], key: 'like', unset: key, value };
+    case '$nlike':
+      return { path: ['where', ...path], key: 'nlike', unset: key, value };
+    case '$ilike':
+      return { path: ['where', ...path], key: 'ilike', unset: key, value };
+    case '$nilike':
+      return { path: ['where', ...path], key: 'nilike', unset: key, value };
+    case '$regexp':
+      return { path: ['where', ...path], key: 'regexp', unset: key, value };
+    case '$near':
+      return { path: ['where', ...path], key: 'near', unset: key, value };
+    case '$maxDistance':
+      return { path: ['where', ...path], key: 'maxDistance', unset: key, value };
+    case '$minDistance':
+      return { path: ['where', ...path], key: 'minDistance', unset: key, value };
+    case '$unit':
+      return { path: ['where', ...path], key: 'unit', unset: key, value };
+
+    // other properties should go into where
+    default:
+      return { path: ['where', ...path], key, value };
+  }
+}
+
+function traverse (o, fn, ...path) {
+  Object.keys(o).forEach((k) => {
+    let descend = fn.apply(this, [o[k], k.toString(), ...path]);
+    if (descend !== false && o[k] !== null && typeof o[k] === 'object') {
+      // going one step down in the object tree!!
+      traverse.apply(this, [o[k], fn, ...path, k.toString()]);
+    }
+  });
+}
+
+function coerceParamsToLoopbackFilter ({ query }) {
+  let unsetPaths = [];
+  let filter = {};
+  traverse(query, (v, k, ...p) => {
+    let { value, key, path, unset, descend } = coerceQueryEntry(v, k, ...p);
+    if (!_isUndefined(value)) {
+      _set(filter, [...path, key], value);
+    }
+    if (!_isUndefined(unset)) {
+      unsetPaths.push([...path, unset]);
+    }
+    return descend;
+  });
+  if (unsetPaths.length) {
+    unsetPaths.forEach(unsetPath => {
+      _unset(filter, unsetPath);
+    });
+  }
+  return filter;
+}
+
+class Service {
+  constructor (options = {}) {
     this.options = options;
     this.paginate = options.paginate || {};
     this.id = options.id || 'id';
@@ -17,112 +137,40 @@ class Service {
     this.model = options.Model;
   }
 
-  // extend(obj) {
-  //     return Proto.extend(obj, this);
-  // }
+  transformQuery (params, paginate = {}) {
+    let query = {};
+    if (params.query) {
+      query = coerceParamsToLoopbackFilter(params);
+      query.limit = getLimit(query.limit, paginate);
+      if (_isUndefined(query.limit)) {
+        delete query.limit;
+      }
 
-  parse(number) {
-    if (typeof number !== 'undefined') {
-      return Math.abs(parseInt(number, 10));
+      debug('New Query', query);
+      return query;
     }
+    return params;
   }
 
-  getLimit(limit, paginate) {
-    if (paginate && paginate.default) {
-      const lower = typeof limit === 'number' ? limit : paginate.default;
-      const upper = typeof paginate.max === 'number' ? paginate.max : Number.MAX_VALUE;
-      return Math.min(lower, upper);
-    }
-    return limit;
-  }
-
-  transformQuery(queryParams, paginate) {
-    let query = JSON.parse(JSON.stringify(queryParams));
-    let newQuery = {};
-    if (query.query) {
-      if (paginate) {
-        debug('Paginate', paginate);
-        newQuery.limit = paginate.default;
-      }
-      if (query.query.$sort) {
-        let sorts = [];
-        for (var i in query.query.$sort) {
-          if (query.query.$sort[i] === 1 || query.query.$sort[i] === '1') { sorts.push(i + ' ASC'); }
-          if (query.query.$sort[i] === -1 || query.query.$sort[i] === '-1') { sorts.push(i + ' DESC'); }
-        }
-        newQuery.order = sorts;
-        delete query.query.$sort;
-      }
-      if (query.query.$select) {
-        let select = {};
-        query.query.$select.forEach((item) => {
-          select[item] = true;
-        });
-        newQuery.fields = select;
-        delete query.query.$select;
-      }
-      if (query.query.$limit) {
-        newQuery.limit = this.getLimit(this.parse(query.query.$limit), paginate);
-        delete query.query.$limit;
-      }
-      if (query.query.$include) {
-        newQuery.include = query.query.$include;
-        delete query.query.$include;
-      }
-      if (query.query.$skip) {
-        newQuery.skip = query.query.$skip;
-        delete query.query.$skip;
-      }
-      var replaced = JSON.stringify(query.query)
-        .replace(/\$in/g, 'inq')
-        .replace(/\$nin/g, 'nin')
-        .replace(/\$lt/g, 'lt')
-        .replace(/\$lte/g, 'lte')
-        .replace(/\$gt/g, 'gt')
-        .replace(/\$gte/g, 'gte')
-        .replace(/\$ne/g, 'neq')
-        .replace(/\$not/g, 'neq')
-        .replace(/\$or/g, 'or')
-        .replace(/\$and/g, 'and')
-        .replace(/\$between/g, 'between')
-        .replace(/\$inq/g, 'inq')
-        .replace(/\$like/g, 'like')
-        .replace(/\$nlike/g, 'nlike')
-        .replace(/\$ilike/g, 'ilike')
-        .replace(/\$nilike/g, 'nilike')
-        .replace(/\$regexp/g, 'regexp')
-        .replace(/\$near/g, 'near')
-        .replace(/\$maxDistance/g, 'maxDistance')
-        .replace(/\$minDistance/g, 'minDistance')
-        .replace(/\$unit/g, 'unit');
-      newQuery.where = JSON.parse(replaced);
-      debug('New Query', newQuery);
-      return newQuery;
-    }
-    return queryParams;
-  }
-
-  find(params) {
+  find (params) {
     const paginate = (params && typeof params.paginate !== 'undefined') ? params.paginate : this.paginate;
     params.query = params.query || {};
+    const filter = this.transformQuery(params, paginate);
+    const getResults = () => filter.limit === 0 ? Promise.resolve([]) : this.model.find(filter);
     if (!paginate.default) {
-      return this.model.find(this.transformQuery(params, paginate));
+      return getResults();
     }
-    return this.model.find(this.transformQuery(params, paginate))
-      .then((results) => {
-        return this.model.count(this.transformQuery(params, paginate).where)
-          .then((count) => {
-            return Promise.resolve({
-              total: count,
-              limit: this.getLimit(this.parse(params.query.$limit), paginate),
-              skip: params.query.$skip ? parseInt(params.query.$skip) : 0,
-              data: results
-            });
-          });
-      });
+    return Promise.all([this.model.count(filter.where), getResults()])
+      .then(([count, results]) => ({
+        total: count,
+        skip: params.query.$skip ? parse(params.query.$skip) : 0,
+        limit: getLimit(params.query.$limit, paginate),
+        data: results
+      }));
   }
 
-  get(id, params) {
+  get (id, params) {
+    const select = commons.select(params, this.id);
     return this.model.findById(id).then(result => {
       if (!result) {
         return Promise.reject(
@@ -130,41 +178,42 @@ class Service {
         );
       }
       return Promise.resolve(result)
-        .then(commons.select(params, this.id));
+        .then(select);
     });
   }
-  create(data, params) {
+  create (data, params) {
+    const select = commons.select(params, this.id);
     if (data instanceof Array) {
       return this.model.create(data);
     } else {
       return this.model.create(data)
-        .then(commons.select(params, this.id));
+        .then(select);
     }
   }
-  update(id, data, params) {
+  update (id, data, params) {
+    const select = commons.select(params, this.id);
     if (Array.isArray(data) || id === null) {
       return Promise.reject(new errors.BadRequest('Not replacing multiple records. Did you mean `patch`?'));
     }
     delete data.id;
     return this.model.replaceById(id, data)
-      .then(result => {
-        return Promise.resolve(result)
-          .then(commons.select(params, this.id));
-      }).catch(() => {
+      .then(select)
+      .catch(() => {
         return Promise.reject(
           new errors.NotFound(`No record found for id '${id}'`)
         );
       });
   }
-  patch(id, data, params) {
+  patch (id, data, params) {
+    const filter = this.transformQuery(params);
+    const select = commons.select(params, this.id);
+    // if (id === null && !_isEmpty(filter.where)) {
     if (id === null) {
-      return this.model.updateAll(this.transformQuery(params).where, data)
-        .then((result) => {
-          params.query = data;
-          return this.whatData(this.transformQuery(params))
-            .then((res) => {
-              return Promise.resolve(res);
-            });
+      return this.model.find(filter)
+        .then((results) => {
+          const ids = results.map(item => item[this.id]);
+          return this.model.updateAll(filter.where, data)
+            .then(() => this.model.find({ where: { [this.id]: { inq: ids } } }));
         });
     }
     return this.model.findById(id)
@@ -174,34 +223,26 @@ class Service {
             new errors.NotFound(`No record found for id '${id}'`)
           );
         }
-        let patchData = Object.assign({}, JSON.parse(JSON.stringify(result)), JSON.parse(JSON.stringify(data)));
+        let patchData = _merge({}, _cloneDeep(result), _cloneDeep(data));
         delete patchData.id;
-        return this.model.replaceById(id, patchData)
-          .then(result1 => {
-            return Promise.resolve(result1)
-              .then(commons.select(params, this.id));
-          }).catch(() => {
-            return Promise.reject(
-              new errors.NotFound(`No record found for id '${id}'`)
-            );
-          });
+        return this.model.replaceById(id, patchData);
+      })
+      .then(select)
+      .catch(() => {
+        return Promise.reject(
+          new errors.NotFound(`No record found for id '${id}'`)
+        );
       });
   }
-  remove(id, params) {
+  remove (id, params) {
+    const filter = this.transformQuery(params, {});
+    const select = commons.select(params, this.id);
+    // if (id === null && !_isEmpty(filter.where)) {
     if (id === null) {
-      return this.model.find(this.transformQuery(this.transformQuery(params), {}))
+      return this.model.find(filter)
         .then((results) => {
-          return this.model.count(this.transformQuery(params, {}).where)
-            .then((count) => {
-              return this.model.destroyAll(this.transformQuery(params).where)
-                .then(() => {
-                  return Promise.resolve(results)
-                    .then(commons.select(params, this.id))
-                    .then((output) => {
-                      return Promise.resolve(output);
-                    });
-                });
-            });
+          return this.model.destroyAll(filter.where || {})
+            .then(() => select(results));
         });
     }
 
@@ -211,22 +252,13 @@ class Service {
           new errors.NotFound(`No record found for id '${id}'`)
         );
       }
-      return Promise.resolve(result)
-        .then(() => {
-          return this.model.destroyById(id)
-            .then(() => {
-              return Promise.resolve(result).then(commons.select(params, this.id));
-            });
-        });
+      return this.model.destroyById(id)
+        .then(() => select(result));
     });
-  }
-
-  whatData(params) {
-    return this.model.find(this.transformQuery(params, {}));
   }
 }
 
-export default function init(options) {
+export default function init (options) {
   debug('Initializing feathers-loopback-connector adapter');
   return new Service(options);
 }

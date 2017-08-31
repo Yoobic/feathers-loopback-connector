@@ -1,22 +1,19 @@
 # feathers-loopback-connector
 
-[![Build Status](https://travis-ci.org/feathersjs/feathers-loopback-connector.png?branch=master)](https://travis-ci.org/feathersjs/feathers-loopback-connector)
+<!-- [![Build Status](https://travis-ci.org/feathersjs/feathers-loopback-connector.png?branch=master)](https://travis-ci.org/feathersjs/feathers-loopback-connector)
 [![Code Climate](https://codeclimate.com/github/feathersjs/feathers-loopback-connector/badges/gpa.svg)](https://codeclimate.com/github/feathersjs/feathers-loopback-connector)
 [![Test Coverage](https://codeclimate.com/github/feathersjs/feathers-loopback-connector/badges/coverage.svg)](https://codeclimate.com/github/feathersjs/feathers-loopback-connector/coverage)
 [![Dependency Status](https://img.shields.io/david/feathersjs/feathers-loopback-connector.svg?style=flat-square)](https://david-dm.org/feathersjs/feathers-loopback-connector)
-[![Download Status](https://img.shields.io/npm/dm/feathers-loopback-connector.svg?style=flat-square)](https://www.npmjs.com/package/feathers-loopback-connector)
+[![Download Status](https://img.shields.io/npm/dm/feathers-loopback-connector.svg?style=flat-square)](https://www.npmjs.com/package/feathers-loopback-connector) -->
 
 > 
 
 ## Installation
 
 ```
-npm install feathers-loopback-connector --save
+# npm install feathers-loopback-connector --save
+npm install Yoobic/feathers-loopback-connector --save
 ```
-
-## Documentation
-
-Please refer to the [feathers-loopback-connector documentation](http://docs.feathersjs.com/) for more details.
 
 ## Complete Example
 
@@ -63,6 +60,71 @@ module.exports = app.listen(3030);
 ## Supported Loopback specific queries
 
 On top of the standard, cross-adapter [queries](http://docs.feathersjs.com/databases/querying.html), feathers-loopback-connector also supports [Loopback specific queries](http://loopback.io/doc/en/lb3/Where-filter.html).
+
+## Limitation from loopback regarding 
+*N.B.*: Loopback does not support the use of multiple operators in a single syntactic object. These will need to be composed with an `and`.
+
+In the cross-adapter syntax:
+```js
+//this will not work:
+params = {
+    query: {
+        $limit: 5,
+        $sort: {
+            age: 1
+        },
+        $select: ['_id', 'name', 'age'],
+        age: { $gt: 10, $lt: 30 }
+    }
+}
+// do this instead:
+params = {
+    query: {
+        $limit: 5,
+        $sort: {
+            age: 1
+        },
+        $select: ['_id', 'name', 'age'],
+        $and: [
+            { age: { $lt: 30 } },
+            { age: { $gt: 10 } }
+        ]
+    }
+}
+```
+
+In loopback syntax:
+```js
+//this will not work:
+filter = {
+    limit: 5,
+    sort: ['age ASC'],
+    fields: {
+        '_id': true,
+        'name': true,
+        'age': true
+    },
+    where: {
+        age: { gt: 10, lt: 30 }
+    }
+}
+// do this instead:
+params = {
+    limit: 5,
+    sort: ['age ASC'],
+    fields: {
+        '_id': true,
+        'name': true,
+        'age': true
+    },
+    where: {
+        and: [
+            { age: { gt: 10 } },
+            { age: { lt: 30 } }
+        ]
+    }
+}
+```
 
 ### $and
 
