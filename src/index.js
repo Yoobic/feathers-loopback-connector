@@ -5,10 +5,11 @@ const debug = makeDebug('feathers-loopback-connector');
 // const error = makeDebug('feathers-loopback-connector:error');
 const commons = require('feathers-commons');
 const _isUndefined = require('lodash.isundefined');
-const _isEmpty = require('lodash.isempty');
+// const _isEmpty = require('lodash.isempty');
 const _cloneDeep = require('lodash.clonedeep');
 const _merge = require('lodash.merge');
-const _transform = require('lodash.transform');
+const _set = require('lodash.set');
+const _unset = require('lodash.unset');
 // if (!global._babelPolyfill) { require('babel-polyfill'); }
 
 function parse (num) {
@@ -26,77 +27,105 @@ function getLimit (limit, paginate) {
   return limit;
 }
 
-function coerceQueryEntry (value, key) {
+function coerceQueryEntry (value, key, ...path) {
   switch (key) {
-        // order, limit, include, fields, skip operators
+    // order, limit, include, fields, skip operators
     case '$sort':
-      // eslint-disable-next-line eqeqeq
-      return { order: Object.keys(value).reduce((acc, key) => value[key] == 1 ? acc.concat(`${key} ASC`) : value[key] == -1 ? acc.concat(`${key} DESC`) : acc, []) };
+      return {
+        path,
+        key: 'order',
+        // eslint-disable-next-line eqeqeq
+        value: Object.keys(value).reduce((acc, key) => value[key] == 1 ? acc.concat(`${key} ASC`) : value[key] == -1 ? acc.concat(`${key} DESC`) : acc, []),
+        descend: false
+      };
     case '$select':
-      return { fields: value };
+      return { path, key: 'fields', value, descend: false };
     case '$limit':
-      return { limit: parse(value) };
+      return { path, key: 'limit', value: parse(value), descend: false };
     case '$include':
-      return { include: value };
+      return { path, key: 'include', value, descend: false };
     case '$skip':
-      return Number.isSafeInteger(value) ? { skip: parse(value) } : {};
+      return Number.isSafeInteger(value) ? { path, key: 'skip', value: parse(value), descend: false } : null;
 
-        // where operators
+    // where property operators
     case '$in':
-      return { where: { inq: value } };
+      return { path: ['where', ...path], key: 'inq', unset: key, value };
     case '$nin':
-      return { where: { nin: value } };
+      return { path: ['where', ...path], key: 'nin', unset: key, value };
     case '$lt':
-      return { where: { lt: value } };
+      return { path: ['where', ...path], key: 'lt', unset: key, value };
     case '$lte':
-      return { where: { lte: value } };
+      return { path: ['where', ...path], key: 'lte', unset: key, value };
     case '$gt':
-      return { where: { gt: value } };
+      return { path: ['where', ...path], key: 'gt', unset: key, value };
     case '$gte':
-      return { where: { gte: value } };
+      return { path: ['where', ...path], key: 'gte', unset: key, value };
     case '$ne':
-      return { where: { neq: value } };
+      return { path: ['where', ...path], key: 'neq', unset: key, value };
     case '$not':
-      return { where: { neq: value } };
+      return { path: ['where', ...path], key: 'neq', unset: key, value };
     case '$or':
-      return { where: { or: value } };
+      return { path: ['where', ...path], key: 'or', unset: key, value };
     case '$and':
-      return { where: { and: value } };
+      return { path: ['where', ...path], key: 'and', unset: key, value };
     case '$between':
-      return { where: { between: value } };
+      return { path: ['where', ...path], key: 'between', unset: key, value };
     case '$inq':
-      return { where: { inq: value } };
+      return { path: ['where', ...path], key: 'inq', unset: key, value };
     case '$like':
-      return { where: { like: value } };
+      return { path: ['where', ...path], key: 'like', unset: key, value };
     case '$nlike':
-      return { where: { nlike: value } };
+      return { path: ['where', ...path], key: 'nlike', unset: key, value };
     case '$ilike':
-      return { where: { ilike: value } };
+      return { path: ['where', ...path], key: 'ilike', unset: key, value };
     case '$nilike':
-      return { where: { nilike: value } };
+      return { path: ['where', ...path], key: 'nilike', unset: key, value };
     case '$regexp':
-      return { where: { regexp: value } };
+      return { path: ['where', ...path], key: 'regexp', unset: key, value };
     case '$near':
-      return { where: { near: value } };
+      return { path: ['where', ...path], key: 'near', unset: key, value };
     case '$maxDistance':
-      return { where: { maxDistance: value } };
+      return { path: ['where', ...path], key: 'maxDistance', unset: key, value };
     case '$minDistance':
-      return { where: { minDistance: value } };
+      return { path: ['where', ...path], key: 'minDistance', unset: key, value };
     case '$unit':
-      return { where: { unit: value } };
+      return { path: ['where', ...path], key: 'unit', unset: key, value };
 
         // other properties should go directly into where
     default:
-      return { where: { [key]: value } };
+      return { path: ['where', ...path], key, value };
   }
 }
 
-function coerceParamsToLoopbackFilter ({ query }) {
-  return _transform(query, (acc, value, key) => {
-    if (!_isUndefined(value)) {
-      _merge(acc, coerceQueryEntry(value, key));
+function traverse (o, fn, ...path) {
+  Object.keys(o).forEach((k) => {
+    let descend = fn.apply(this, [o[k], k.toString(), ...path]);
+    if (descend !== false && o[k] !== null && typeof o[k] === 'object') {
+      // going one step down in the object tree!!
+      traverse.apply(this, [o[k], fn, ...path, k.toString()]);
     }
+  });
+}
+
+function coerceParamsToLoopbackFilter ({ query }) {
+  let entries = [];
+  traverse(query, (value, key, ...path) => {
+    let coerced = coerceQueryEntry(value, key, ...path);
+    if (coerced && !_isUndefined(coerced.value)) {
+      entries.push(coerced);
+    }
+    if (coerced.path[0] === 'limit') {
+      console.log('LIMIT', coerced);
+    }
+    return coerced && coerced.descend !== false;
+  });
+  let filter = entries.reduce((acc, { path, key, value }) => {
+    return _set(acc, [...path, key], value);
   }, {});
+  entries.filter(c => c.unset).forEach(({ path, unset }) => {
+    _unset(filter, [...path, unset]);
+  });
+  return filter;
 }
 
 class Service {
@@ -113,7 +142,11 @@ class Service {
     if (params.query) {
       query = coerceParamsToLoopbackFilter(params);
       query.limit = getLimit(query.limit, paginate);
+      if (_isUndefined(query.limit)) {
+        delete query.limit;
+      }
 
+      console.log('New Query', query);
       debug('New Query', query);
       return query;
     }
@@ -131,7 +164,7 @@ class Service {
       .then(([count, results]) => ({
         total: count,
         skip: params.query.$skip ? parse(params.query.$skip) : 0,
-        limit: getLimit(params.query.$limit, paginate) || null,
+        limit: getLimit(params.query.$limit, paginate),
         data: results
       }));
   }
@@ -174,11 +207,12 @@ class Service {
   patch (id, data, params) {
     const filter = this.transformQuery(params);
     const select = commons.select(params, this.id);
-    if (id === null && !_isEmpty(filter.where)) {
+    // if (id === null && !_isEmpty(filter.where)) {
+    if (id === null) {
       return this.model.updateAll(filter.where, data)
         .then((result) => {
           params.query = data;
-          return this.model.find(filter);
+          return this.model.find(this.transformQuery(params));
         });
     }
     return this.model.findById(id)
@@ -202,10 +236,11 @@ class Service {
   remove (id, params) {
     const filter = this.transformQuery(params, {});
     const select = commons.select(params, this.id);
-    if (id === null && !_isEmpty(filter.where)) {
+    // if (id === null && !_isEmpty(filter.where)) {
+    if (id === null) {
       return this.model.find(filter)
         .then((results) => {
-          return this.model.destroyAll(filter.where)
+          return this.model.destroyAll(filter.where || {})
             .then(() => select(results));
         });
     }
