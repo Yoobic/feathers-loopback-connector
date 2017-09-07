@@ -1,132 +1,15 @@
 'use strict';
-const errors = require('feathers-errors');
-const makeDebug = require('debug');
-const debug = makeDebug('feathers-loopback-connector');
-// const error = makeDebug('feathers-loopback-connector:error');
-const commons = require('feathers-commons');
-const _isUndefined = require('lodash.isundefined');
-// const _isEmpty = require('lodash.isempty');
-const _cloneDeep = require('lodash.clonedeep');
-const _merge = require('lodash.merge');
-const _set = require('lodash.set');
-const _unset = require('lodash.unset');
+import errors from 'feathers-errors';
+import makeDebug from 'debug';
+import commons from 'feathers-commons';
+import _isUndefined from 'lodash.isundefined';
+import _cloneDeep from 'lodash.clonedeep';
+import _merge from 'lodash.merge';
+import { coerceQueryToLoopbackFilter, getLimit, parse } from './util';
 // if (!global._babelPolyfill) { require('babel-polyfill'); }
 
-function parse (num) {
-  if (Number.isFinite(num)) {
-    return Math.abs(Number.parseInt(num));
-  }
-}
-function getLimit (limit, paginate) {
-  limit = parse(limit);
-  if (paginate && paginate.default) {
-    const lower = Number.isInteger(limit) ? limit : paginate.default;
-    const upper = Number.isInteger(paginate.max) ? paginate.max : Number.MAX_VALUE;
-    return Math.min(lower, upper);
-  }
-  return limit;
-}
-
-function coerceQueryEntry (value, key, ...path) {
-  switch (key) {
-    // order, limit, include, fields, skip operators
-    case '$sort':
-      return {
-        path,
-        key: 'order',
-        // eslint-disable-next-line eqeqeq
-        value: Object.keys(value).reduce((acc, key) => value[key] == 1 ? acc.concat(`${key} ASC`) : value[key] == -1 ? acc.concat(`${key} DESC`) : acc, []),
-        descend: false
-      };
-    case '$select':
-      return { path, key: 'fields', value, descend: false };
-    case '$limit':
-      return { path, key: 'limit', value: parse(value), descend: false };
-    case '$include':
-      return { path, key: 'include', value, descend: false };
-    case '$skip':
-      return Number.isSafeInteger(value) ? { path, key: 'skip', value: parse(value), descend: false } : null;
-
-    // where property operators
-    case '$in':
-      return { path: ['where', ...path], key: 'inq', unset: key, value };
-    case '$nin':
-      return { path: ['where', ...path], key: 'nin', unset: key, value };
-    case '$lt':
-      return { path: ['where', ...path], key: 'lt', unset: key, value };
-    case '$lte':
-      return { path: ['where', ...path], key: 'lte', unset: key, value };
-    case '$gt':
-      return { path: ['where', ...path], key: 'gt', unset: key, value };
-    case '$gte':
-      return { path: ['where', ...path], key: 'gte', unset: key, value };
-    case '$ne':
-      return { path: ['where', ...path], key: 'neq', unset: key, value };
-    case '$not':
-      return { path: ['where', ...path], key: 'neq', unset: key, value };
-    case '$or':
-      return { path: ['where', ...path], key: 'or', unset: key, value };
-    case '$and':
-      return { path: ['where', ...path], key: 'and', unset: key, value };
-    case '$between':
-      return { path: ['where', ...path], key: 'between', unset: key, value };
-    case '$inq':
-      return { path: ['where', ...path], key: 'inq', unset: key, value };
-    case '$like':
-      return { path: ['where', ...path], key: 'like', unset: key, value };
-    case '$nlike':
-      return { path: ['where', ...path], key: 'nlike', unset: key, value };
-    case '$ilike':
-      return { path: ['where', ...path], key: 'ilike', unset: key, value };
-    case '$nilike':
-      return { path: ['where', ...path], key: 'nilike', unset: key, value };
-    case '$regexp':
-      return { path: ['where', ...path], key: 'regexp', unset: key, value };
-    case '$near':
-      return { path: ['where', ...path], key: 'near', unset: key, value };
-    case '$maxDistance':
-      return { path: ['where', ...path], key: 'maxDistance', unset: key, value };
-    case '$minDistance':
-      return { path: ['where', ...path], key: 'minDistance', unset: key, value };
-    case '$unit':
-      return { path: ['where', ...path], key: 'unit', unset: key, value };
-
-    // other properties should go into where
-    default:
-      return { path: ['where', ...path], key, value };
-  }
-}
-
-function traverse (o, fn, ...path) {
-  Object.keys(o).forEach((k) => {
-    let descend = fn.apply(this, [o[k], k.toString(), ...path]);
-    if (descend !== false && o[k] !== null && typeof o[k] === 'object') {
-      // going one step down in the object tree!!
-      traverse.apply(this, [o[k], fn, ...path, k.toString()]);
-    }
-  });
-}
-
-function coerceParamsToLoopbackFilter ({ query }) {
-  let unsetPaths = [];
-  let filter = {};
-  traverse(query, (v, k, ...p) => {
-    let { value, key, path, unset, descend } = coerceQueryEntry(v, k, ...p);
-    if (!_isUndefined(value)) {
-      _set(filter, [...path, key], value);
-    }
-    if (!_isUndefined(unset)) {
-      unsetPaths.push([...path, unset]);
-    }
-    return descend;
-  });
-  if (unsetPaths.length) {
-    unsetPaths.forEach(unsetPath => {
-      _unset(filter, unsetPath);
-    });
-  }
-  return filter;
-}
+const debug = makeDebug('feathers-loopback-connector');
+// const error = makeDebug('feathers-loopback-connector:error');
 
 class Service {
   constructor (options = {}) {
@@ -140,7 +23,7 @@ class Service {
   transformQuery (params, paginate = {}) {
     let query = {};
     if (params.query) {
-      query = coerceParamsToLoopbackFilter(params);
+      query = coerceQueryToLoopbackFilter(params.query, this.id);
       query.limit = getLimit(query.limit, paginate);
       if (_isUndefined(query.limit)) {
         delete query.limit;
@@ -170,16 +53,22 @@ class Service {
   }
 
   get (id, params) {
+    const filter = this.transformQuery(params);
     const select = commons.select(params, this.id);
-    return this.model.findById(id).then(result => {
-      if (!result) {
-        return Promise.reject(
-          new errors.NotFound(`No record found for id '${id}'`)
-        );
-      }
-      return Promise.resolve(result)
-        .then(select);
-    });
+    debug('GETTING WITH ID', id);
+    return this.model.findById(id, filter)
+      .then(result => {
+        if (!result) {
+          return Promise.reject(
+            new errors.NotFound(`No record found for id '${id}'`)
+          );
+        }
+        debug('RESULT', result);
+        debug('SELECTED RESULT', select(result));
+
+        return result;
+      })
+      .then(select);
   }
   create (data, params) {
     const select = commons.select(params, this.id);
@@ -207,7 +96,6 @@ class Service {
   patch (id, data, params) {
     const filter = this.transformQuery(params);
     const select = commons.select(params, this.id);
-    // if (id === null && !_isEmpty(filter.where)) {
     if (id === null) {
       return this.model.find(filter)
         .then((results) => {
@@ -235,9 +123,8 @@ class Service {
       });
   }
   remove (id, params) {
-    const filter = this.transformQuery(params, {});
+    const filter = this.transformQuery(params);
     const select = commons.select(params, this.id);
-    // if (id === null && !_isEmpty(filter.where)) {
     if (id === null) {
       return this.model.find(filter)
         .then((results) => {
@@ -254,6 +141,7 @@ class Service {
       }
       return this.model.destroyById(id)
         .then(() => select(result));
+        // .then(() => select(result));
     });
   }
 }
