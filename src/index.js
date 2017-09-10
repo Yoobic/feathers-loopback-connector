@@ -3,8 +3,6 @@ import errors from 'feathers-errors';
 import makeDebug from 'debug';
 import commons from 'feathers-commons';
 import _isUndefined from 'lodash.isundefined';
-import _cloneDeep from 'lodash.clonedeep';
-import _merge from 'lodash.merge';
 import { coerceQueryToLoopbackFilter, getLimit, parse } from './util';
 // if (!global._babelPolyfill) { require('babel-polyfill'); }
 
@@ -97,12 +95,14 @@ class Service {
     const filter = this.transformQuery(params);
     const select = commons.select(params, this.id);
     if (id === null) {
-      return this.model.find(filter)
+      let ids;
+      return this.model.find({ where: filter.where, fields: [this.id] })
         .then((results) => {
-          const ids = results.map(item => item[this.id]);
-          return this.model.updateAll(filter.where, data)
-            .then(() => this.model.find({ where: { [this.id]: { inq: ids } } }));
-        });
+          ids = results.map(item => item[this.id]);
+          return this.model.updateAll(filter.where, data);
+        })
+        .then(() => this.model.find({ where: { [this.id]: { inq: ids } } }))
+        .then(select);
     }
     return this.model.findById(id)
       .then(result => {
@@ -111,9 +111,7 @@ class Service {
             new errors.NotFound(`No record found for id '${id}'`)
           );
         }
-        let patchData = _merge({}, _cloneDeep(result), _cloneDeep(data));
-        delete patchData.id;
-        return this.model.replaceById(id, patchData);
+        return result.updateAttributes(data);
       })
       .then(select)
       .catch(() => {
@@ -141,7 +139,6 @@ class Service {
       }
       return this.model.destroyById(id)
         .then(() => select(result));
-        // .then(() => select(result));
     });
   }
 }
