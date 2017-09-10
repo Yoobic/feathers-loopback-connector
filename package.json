@@ -50,10 +50,8 @@
     "debug": "^2.6.3",
     "feathers-commons": "^0.8.7",
     "feathers-errors": "^2.6.3",
-    "lodash.clonedeep": "^4.5.0",
     "lodash.isempty": "^4.4.0",
     "lodash.isundefined": "^3.0.1",
-    "lodash.merge": "^4.6.0",
     "lodash.set": "^4.3.2"
   },
   "devDependencies": {
