@@ -88,7 +88,7 @@ export function traverse (o, fn, ...path) {
 }
 
 export function shouldSetValue (value, path) {
-  return (!_isUndefined(value) || value === null || typeof value !== 'object' || _isEmpty(value)) && path.indexOf(null) === -1;
+  return path.indexOf(null) === -1 && (value === null || typeof value !== 'object') && !_isUndefined(value);
 }
 
 export function coerceQueryToWhereFilter (query) {
@@ -114,26 +114,40 @@ export function coerceSortToOrder ($sort) {
   }, []);
 }
 
+export function coerceSkip (query) {
+  if (Number.isInteger(query.skip)) {
+    return parse(query.skip);
+  } else if (Number.isInteger(query.$skip)) {
+    return parse(query.$skip);
+  }
+  return null;
+}
+
+export function coerceLimit (query) {
+  if (Number.isInteger(query.limit)) {
+    return parse(query.limit);
+  } else if (Number.isInteger(query.$limit)) {
+    return parse(query.$limit);
+  }
+  return null;
+}
+
 export function coerceQueryToLoopbackFilter (query, idProp) {
   let filter = {};
 
-  filter.where = coerceQueryToWhereFilter(query);
+  filter.where = !_isEmpty(query.where) ? query.where : coerceQueryToWhereFilter(query);
+  filter.order = !_isEmpty(query.order) ? query.order : !_isEmpty(query.$sort) ? coerceSortToOrder(query.$sort) : {};
+  filter.fields = !_isEmpty(query.fields) ? query.fields : !_isEmpty(query.$select) ? coerceSelectToFields(query.$select, idProp) : [];
+  filter.include = !_isEmpty(query.include) ? query.include : !_isEmpty(query.$include) ? query.$include : [];
+  filter.skip = coerceSkip(query);
+  filter.limit = coerceLimit(query);
 
-  if (!_isEmpty(query.$sort)) {
-    filter.order = coerceSortToOrder(query.$sort);
-  }
-  if (!_isEmpty(query.$select)) {
-    filter.fields = coerceSelectToFields(query.$select, idProp);
-  }
-  if (!_isEmpty(query.$include)) {
-    filter.include = query.$include;
-  }
-  if (Number.isInteger(query.$skip)) {
-    filter.skip = parse(query.$skip);
-  }
-  if (Number.isInteger(query.$limit)) {
-    filter.limit = parse(query.$limit);
-  }
+  Object.keys(filter)
+    .forEach((key) => {
+      if (!Number.isInteger(filter[key]) && _isEmpty(filter[key])) {
+        delete filter[key];
+      }
+    });
 
   return filter;
 }

@@ -1,12 +1,6 @@
 # feathers-loopback-connector
 
-<!-- [![Build Status](https://travis-ci.org/feathersjs/feathers-loopback-connector.png?branch=master)](https://travis-ci.org/feathersjs/feathers-loopback-connector)
-[![Code Climate](https://codeclimate.com/github/feathersjs/feathers-loopback-connector/badges/gpa.svg)](https://codeclimate.com/github/feathersjs/feathers-loopback-connector)
-[![Test Coverage](https://codeclimate.com/github/feathersjs/feathers-loopback-connector/badges/coverage.svg)](https://codeclimate.com/github/feathersjs/feathers-loopback-connector/coverage)
-[![Dependency Status](https://img.shields.io/david/feathersjs/feathers-loopback-connector.svg?style=flat-square)](https://david-dm.org/feathersjs/feathers-loopback-connector)
-[![Download Status](https://img.shields.io/npm/dm/feathers-loopback-connector.svg?style=flat-square)](https://www.npmjs.com/package/feathers-loopback-connector) -->
-
-> 
+[![Build Status](https://travis-ci.org/Yoobic/feathers-loopback-connector.png?branch=master)](https://travis-ci.org/kethan/feathers-loopback-connector) [![Dependency Status](https://img.shields.io/david/Yoobic/feathers-loopback-connector.svg?style=flat-square)](https://david-dm.org/Yoobic/feathers-loopback-connector) <!-- [![Code Climate](https://codeclimate.com/github/Yoobic/feathers-loopback-connector/badges/gpa.svg)](https://codeclimate.com/github/Yoobic/feathers-loopback-connector) [![Test Coverage](https://codeclimate.com/github/Yoobic/feathers-loopback-connector/badges/coverage.svg)](https://codeclimate.com/github/Yoobic/feathers-loopback-connector/coverage) [![Download Status](https://img.shields.io/npm/dm/feathers-loopback-connector.svg?style=flat-square)](https://www.npmjs.com/package/feathers-loopback-connector) -->
 
 ## Installation
 
@@ -62,9 +56,11 @@ module.exports = app.listen(3030);
 On top of the standard, cross-adapter [queries](http://docs.feathersjs.com/databases/querying.html), feathers-loopback-connector also supports [Loopback specific queries](http://loopback.io/doc/en/lb3/Where-filter.html).
 
 ## Limitation from loopback regarding 
-*N.B.*: Loopback does not support the use of multiple operators in a single syntactic object. These will need to be composed with an `and`.
+ * Loopback does not support implicit `and`, i.e. the compostion of multiple operators within a single syntactic object. These will need to be composed with an upper-level `and` operator. The behavior expected by the `feathers` common service tests is that these operators will be composed. Currently this connector does not rewrite `and` and `or` operators to make loopback accept them as feathers intends. This may change in the future, but for now queries should be written so that they are compatible with loopback.
 
-In the cross-adapter syntax:
+ * It is addionally not recommended to mix loopback filter syntax and the cross-adapter syntax within the same query.
+
+In the cross-adapter syntax (preferred):
 ```js
 //this will not work:
 params = {
@@ -74,7 +70,8 @@ params = {
             age: 1
         },
         $select: ['_id', 'name', 'age'],
-        age: { $gt: 10, $lt: 30 }
+        age: { $gt: 10, $lt: 30 },
+        name: { $in: ['David', 'Bob'] }
     }
 }
 // do this instead:
@@ -88,40 +85,45 @@ params = {
         $and: [
             { age: { $lt: 30 } },
             { age: { $gt: 10 } }
-        ]
+        ],
+        name: { $in: ['David', 'Bob'] }
     }
 }
 ```
 
-In loopback syntax:
+In loopback syntax (avoid):
 ```js
 //this will not work:
-filter = {
-    limit: 5,
-    sort: ['age ASC'],
-    fields: {
-        '_id': true,
-        'name': true,
-        'age': true
-    },
-    where: {
-        age: { gt: 10, lt: 30 }
+params = {
+    query: {
+        limit: 5,
+        sort: ['age ASC'],
+        fields: {
+            '_id': true,
+            'name': true,
+            'age': true
+        },
+        where: {
+            age: { gt: 10, lt: 30 }
+        }
     }
 }
 // do this instead:
 params = {
-    limit: 5,
-    sort: ['age ASC'],
-    fields: {
-        '_id': true,
-        'name': true,
-        'age': true
-    },
-    where: {
-        and: [
-            { age: { gt: 10 } },
-            { age: { lt: 30 } }
-        ]
+    query: {
+        limit: 5,
+        sort: ['age ASC'],
+        fields: {
+            '_id': true,
+            'name': true,
+            'age': true
+        },
+        where: {
+            and: [
+                { age: { gt: 10 } },
+                { age: { lt: 30 } }
+            ]
+        }
     }
 }
 ```
