@@ -151,3 +151,8 @@ export function coerceQueryToLoopbackFilter (query, idProp) {
 
   return filter;
 }
+
+export function jsonify (entity) {
+  let toJSON = e => e.toJSON instanceof Function ? e.toJSON() : e;
+  return Array.isArray(entity) ? entity.map(toJSON) : toJSON(entity);
+}
