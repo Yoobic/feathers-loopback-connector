@@ -3,7 +3,7 @@ import errors from 'feathers-errors';
 import makeDebug from 'debug';
 import commons from 'feathers-commons';
 import _isUndefined from 'lodash.isundefined';
-import { coerceQueryToLoopbackFilter, getLimit, parse } from './util';
+import { coerceQueryToLoopbackFilter, getLimit, parse, jsonify } from './util';
 // if (!global._babelPolyfill) { require('babel-polyfill'); }
 
 const debug = makeDebug('feathers-loopback-connector');
@@ -37,45 +37,45 @@ class Service {
     const paginate = (params && typeof params.paginate !== 'undefined') ? params.paginate : this.paginate;
     params.query = params.query || {};
     const filter = this.transformQuery(params, paginate);
-    const getResults = () => filter.limit === 0 ? Promise.resolve([]) : this.model.find(filter);
+    const getResults = () => filter.limit === 0
+      ? Promise.resolve([])
+      : this.model.find(filter)
+        .then(jsonify);
     if (!paginate.default) {
       return getResults();
     }
-    return Promise.all([this.model.count(filter.where), getResults()])
-      .then(([count, results]) => ({
-        total: count,
+    let total;
+    return this.model.count(filter.where)
+      .then(count => {
+        total = count;
+        return getResults();
+      })
+      .then(data => ({
+        total,
         skip: params.query.$skip ? parse(params.query.$skip) : 0,
         limit: getLimit(params.query.$limit, paginate),
-        data: results
+        data
       }));
   }
 
   get (id, params) {
     const filter = this.transformQuery(params);
     const select = commons.select(params, this.id);
-    debug('GETTING WITH ID', id);
     return this.model.findById(id, filter)
       .then(result => {
         if (!result) {
-          return Promise.reject(
-            new errors.NotFound(`No record found for id '${id}'`)
-          );
+          throw new errors.NotFound(`No record found for id '${id}'`);
         }
-        debug('RESULT', result);
-        debug('SELECTED RESULT', select(result));
-
         return result;
       })
+      .then(jsonify)
       .then(select);
   }
   create (data, params) {
     const select = commons.select(params, this.id);
-    if (data instanceof Array) {
-      return this.model.create(data);
-    } else {
-      return this.model.create(data)
-        .then(select);
-    }
+    return this.model.create(data)
+      .then(jsonify)
+      .then(select);
   }
   update (id, data, params) {
     const select = commons.select(params, this.id);
@@ -84,6 +84,7 @@ class Service {
     }
     delete data.id;
     return this.model.replaceById(id, data)
+      .then(jsonify)
       .then(select)
       .catch(() => {
         return Promise.reject(
@@ -102,6 +103,7 @@ class Service {
           return this.model.updateAll(filter.where, data);
         })
         .then(() => this.model.find({ where: { [this.id]: { inq: ids } } }))
+        .then(jsonify)
         .then(select);
     }
     return this.model.findById(id)
@@ -113,6 +115,7 @@ class Service {
         }
         return result.updateAttributes(data);
       })
+      .then(jsonify)
       .then(select)
       .catch(() => {
         return Promise.reject(
@@ -127,19 +130,24 @@ class Service {
       return this.model.find(filter)
         .then((results) => {
           return this.model.destroyAll(filter.where || {})
-            .then(() => select(results));
+            .then(() => results)
+            .then(jsonify)
+            .then(select);
         });
     }
 
-    return this.model.findById(id).then(result => {
-      if (!result) {
-        return Promise.reject(
-          new errors.NotFound(`No record found for id '${id}'`)
-        );
-      }
-      return this.model.destroyById(id)
-        .then(() => select(result));
-    });
+    return this.model.findById(id)
+      .then(result => {
+        if (!result) {
+          return Promise.reject(
+            new errors.NotFound(`No record found for id '${id}'`)
+          );
+        }
+        return this.model.destroyById(id)
+          .then(() => result)
+          .then(jsonify)
+          .then(select);
+      });
   }
 }
 
